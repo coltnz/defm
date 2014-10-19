@@ -1,7 +1,21 @@
 (ns defm.core
-  (:import (java.util Comparator))
-  (:require [clojure.tools.macro :refer [name-with-attributes]]
-            [clojure.walk :refer [postwalk]]))
+  (:require [clojure.walk :refer [postwalk]]))
+
+(defn name-with-attributes                                  ;inlined from tools.macro
+  [name macro-args]
+  (let [[docstring macro-args] (if (string? (first macro-args))
+                                 [(first macro-args) (next macro-args)]
+                                 [nil macro-args])
+        [attr macro-args] (if (map? (first macro-args))
+                            [(first macro-args) (next macro-args)]
+                            [{} macro-args])
+        attr (if docstring
+               (assoc attr :doc docstring)
+               attr)
+        attr (if (meta name)
+               (conj (meta name) attr)
+               attr)]
+    [(with-meta name attr) macro-args]))
 
 (def primitive-sym? #{float double boolean byte char short int long
                       floats doubles booleans bytes chars shorts ints longs})
@@ -19,18 +33,16 @@
            (primitive-sym? match))))
 
 (defn ->test [match args]
-  (println "match is " match)
-  (println "args is " args)
   (let [test (map
                (fn [m a]
                  (cond
                    (type? m) (list 'instance? m a)
                    (symbol? m) :else
+                   (= m :else) :else
                    :else (list '= a m)))
                match args)
         test (if (second test) (remove :else test) test)
         test (if (second test) (cons 'and test) (first test))]
-    (println "test is " test)
     test))
 
 (defn ->locals [match params]
@@ -65,7 +77,7 @@
                     [(->test match params)
                      (->locals match params)]))
                 matches)]
-    (if-not (filter  #(or (true? %) (= :else %)) (first (butlast ts&ls)))
+    (if-not (filter #(or (true? %) (= :else %)) (first (butlast ts&ls)))
       (conj ts&ls [(list :else `(throw (IllegalArgumentException. (str "No match for " ~params)))) []])
       ts&ls)))
 
@@ -74,13 +86,10 @@
    [ [String] [Integer] ] => (instance "
   (let [params (params-vec arity)
         ts&ls (doall (matches->tests&locals matches params))
-        _ (println "ts&ls" ts&ls)
         clauses (mapcat
                   (fn [[t ls] expr]
-                    (println "LS " ls)
                     (list t (if (empty? ls) (cons 'do expr) (concat `(let ~ls) expr))))
                   ts&ls exprs)]
-    (println  "C " clauses " C")
     (list params (conj clauses 'cond))))
 
 (defmacro defm
@@ -92,20 +101,17 @@
         m (-> name
               meta
               (assoc :arglists (list 'quote (@#'clojure.core/sigs body))))
-        _ (println "Body from " body)
         body (postwalk
                (fn [form]
                  (if (and (list? form) (= 'recur (first form)))
                    (list 'recur (cons 'vector (next form)))
                    form))
                body)
-        _ (println "Body to " body)
-        _ (println "GB " (sort (vec (group-by #(count (first %)) body))))
-        arity->m-pairs (vec (sort (vec (group-by #(count (first %)) body))))
+        arity->m-pairs (vec (sort (group-by #(count (first %)) body)))
         conds (map (fn [[a pairs]]
                      (->cond a (map first pairs) (map rest pairs)))
                    arity->m-pairs)]
-    (clojure.pprint/pprint conds)
+    ;(clojure.pprint/pprint conds)
     `(defn ~name ~m
        ~@conds)))
 

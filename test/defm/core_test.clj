@@ -1,29 +1,104 @@
 (ns defm.core-test
+  (:import (java.io File)
+           (java.net URL))
   (:require [clojure.test :refer :all]
             [defm.core :refer :all]))
+
+(deftest test-exprs
+  (testing "Dispatch on expr value"
+    (defm exprs
+          "Echo."
+          ([:a] "a")
+          ([:b] "b")
+          ([:c] "c")
+          ([:else] (str "-" _1)))                                ;hmm todo
+    (is (= "a" (exprs :a)))
+    (is (= "b" (exprs :b)))
+    (is (= "c" (exprs :c)))
+    (is (= "-other" (exprs "other")))))
 
 (deftest test-expr-fn
   (testing "Normal function."
     (defm square
-      "Square function"
-      [x]
-      (* x x))
+          "Square function"
+          [x]
+          (* x x))
     (is (= 4 (square 2)))
     (is (= 9 (square 3)))
     (is (thrown? IllegalArgumentException (square 3 4)))))
 
-(deftest test-exprs
-  (testing "Dispatch on expr value"
-    (defm echo
-      "Echo."
-      ([:a] "a")
-      ([:b] "b")
-      ([:c] "c")
-      ([other] (str "-" other)))
-    (is (= "a" (echo :a)))
-    (is (= "b" (echo :b)))
-    (is (= "c" (echo :c)))
-    (is (= "-other" (echo "other")))))
+(deftest test-symbols
+  (testing "symbols are bound to params"
+    (defm symbol-fn
+          (["f"] "F")
+          (["f" s] (str "f" s))
+          ([s "f"] (str s "f"))
+          ([s] "thisiss"))
+    (is (= "F" (symbol-fn "f")))
+    (is (= "fS" (symbol-fn "f" "S")))
+    (is (= "Sf" (symbol-fn "S" "f")))
+    (is (= "thisiss" (symbol-fn "thisiss")))))
+
+;(deftest test-type-binds
+;  (testing "symbols can be restrict params to types"
+;    (defm binds-fn
+;          ([s :- String] "F")
+;          ([s :- String "not"] (str s "not"))
+;          ([d1 :- Double
+;            d2 :- Double] (str d1 d2)))
+;    (is (= "F" (binds-fn "f")))
+;    (is (= "fS" (binds-fn "f" "S")))
+;    (is (= "Sf" (binds-fn "S" "f")))
+;    (is (= "thisiss" (binds-fn "thisiss")))))
+
+(deftest mixed
+  (testing "Mixed and anon types"
+    (defm mixed-fn
+          ([File] "File")
+          ([String] "String")
+          ([:else] (.getName (type _1))))
+    (is (= "String" (mixed-fn "a")))
+    (is (= "File" (mixed-fn (File. "b"))))
+    (is (= "java.net.URL" (mixed-fn (URL. "http://c"))))))
+
+
+(deftest test-match-literals
+  (testing "test 1iterals"
+    (defm test1
+          ([true false] 1)
+          ([true true] 2)
+          ([false true] 3)
+          ([false false] 4))
+    (is (= 2 (test1 true true)))
+    (is (= 4 (test1 false false)))))
+
+(deftest test-private
+  (testing "private macro"
+    (defm- test1
+           ([_]))
+    (is (:private (meta #'test1)))))
+
+(deftest test-side-effects
+  (testing "side-effects"
+    (defm.core/defm test-se
+                    ([1] 1)
+                    ([x] (println "squaring")
+                     (* 2 x)))
+    (with-out-str
+      (is (= 4 (test-se 2))))
+    (is (= "squaring") (with-out-str (test-se 2)))))
+
+(deftest test-meta
+  (testing "meta"
+    (defm hello
+          "hello world"
+          ([name] (str "hello," name))
+          ([a b] "unknown."))
+    (is (= "hello world" (-> #'hello meta :doc)))
+    (is (= '([name] [a b])) (-> #'hello meta :arglists))))
+
+
+
 
 ;(deftest test-recursive-function
 ;  (testing "accum"
@@ -54,17 +129,6 @@
 ;      ([_ _] false))
 ;    (is (valid-geopoint? 30 30))
 ;    (is (not (valid-geopoint? -181 30)))))
-
-(deftest test-match-literals
-  (testing "test1"
-    (defm test1
-    ([true false] 1)
-    ([true true] 2)
-    ([false true] 3)
-    ([false false] 4))
-    (is (= 2 (test1 true true)))
-    (is (= 4 (test1 false false)))))
-
 ;(deftest test-match-vector
 ;  (testing "test3"
 ;    (defm test3
@@ -80,28 +144,3 @@
 ;    ([([1 2] :seq)] :a1)
 ;    ([([1 2 nil nil nil] :seq)] :a2))
 ;    (is (= :a2 (test2 [1 2 nil nil nil])))))
-
-(deftest test-private
-  (testing "private macro"
-    (defm- test1
-      ([_]))
-    (is (:private (meta #'test1)))))
-
-(deftest test-side-effects
-  (testing "side-effects"
-    (defm.core/defm test-se
-      ([1] 1)
-      ([x] (println "squaring")
-           (* 2 x)))
-    (with-out-str
-      (is (= 4 (test-se 2))))
-    (is (= "squaring") (with-out-str (test-se 2)))))
-
-(deftest test-meta
-  (testing "meta"
-    (defm hello
-      "hello world"
-      ([name] (str "hello," name))
-      ([a b] "unknown."))
-    (is (= "hello world" (-> #'hello meta :doc)))
-    (is (= '([name] [a b])) (-> #'hello meta :arglists))))

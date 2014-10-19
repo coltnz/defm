@@ -10,7 +10,7 @@ Defm dispatches on parameter type and value as well as number of parameters
 (defm file-or-string-fn []
   ([File] (println "It's a file"))
   ([s :- String] (println "It's a string " s))
-  (:else (println "It's a " (type _1)))
+  ([:else] (println "It's a " (type _1))))
 ````
 
 ## License
