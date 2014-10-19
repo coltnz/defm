@@ -9,7 +9,7 @@ Defm dispatches on parameter type and value as well as number of parameters
 ````clojure
 (defm file-or-string-fn []
   ([File] (println "It's a file"))
-  ([String] (println "It's a string"))
+  ([s :- String] (println "It's a string " s))
   (:else (println "It's a " (type _1)))
 ````
 
