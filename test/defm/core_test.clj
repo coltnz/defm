@@ -13,9 +13,9 @@
     (is (thrown? IllegalArgumentException (square 3 4)))))
 
 (deftest test-exprs
-  (testing "say-hi"
+  (testing "Dispatch on expr value"
     (defm echo
-      "Say hi to people."
+      "Echo."
       ([:a] "a")
       ([:b] "b")
       ([:c] "c")
