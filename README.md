@@ -1,6 +1,8 @@
 # defm
 
-A Clojure library designed to provide a pattern matching defn-like construct called defm.
+A Clojure library designed to provide a simple pattern matching defn-like construct called defm.
+
+Defm dispatches on parameter type and value as well as number of parameters
 
 ## Usage
 
