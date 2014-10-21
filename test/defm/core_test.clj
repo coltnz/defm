@@ -39,17 +39,17 @@
     (is (= "Sf" (symbol-fn "S" "f")))
     (is (= "thisiss" (symbol-fn "thisiss")))))
 
-;(deftest test-type-binds
-;  (testing "symbols can be restrict params to types"
-;    (defm binds-fn
-;          ([s :- String] "F")
-;          ([s :- String "not"] (str s "not"))
-;          ([d1 :- Double
-;            d2 :- Double] (str d1 d2)))
-;    (is (= "F" (binds-fn "f")))
-;    (is (= "fS" (binds-fn "f" "S")))
-;    (is (= "Sf" (binds-fn "S" "f")))
-;    (is (= "thisiss" (binds-fn "thisiss")))))
+(deftest test-type-binds
+  (testing "symbols can be restrict params to types"
+    (defm binds-fn
+          ([s :- String] "F")
+          ([s :- String "not"] (str s "not"))
+          ([d1 :- Double
+            d2 :- Double] (str d1 d2)))
+    (is (= "F" (binds-fn "f")))
+    (is (= "fS" (binds-fn "f" "S")))
+    (is (= "Sf" (binds-fn "S" "f")))
+    (is (= "thisiss" (binds-fn "thisiss")))))
 
 (deftest mixed
   (testing "Mixed and anon types"

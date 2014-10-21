@@ -1,7 +1,8 @@
 (ns defm.core
   (:require [clojure.walk :refer [postwalk]]))
 
-(defn name-with-attributes                                  ;inlined from tools.macro
+;inlined from tools.macro
+(defn name-with-attributes
   [name macro-args]
   (let [[docstring macro-args] (if (string? (first macro-args))
                                  [(first macro-args) (next macro-args)]
@@ -20,7 +21,7 @@
 (def primitive-sym? #{float double boolean byte char short int long
                       floats doubles booleans bytes chars shorts ints longs})
 
-(clojure.core/defn valid-tag? [env tag]
+(defn valid-tag? [env tag]
   (and (symbol? tag) (or (primitive-sym? tag) (class? (resolve env tag)))))
 
 (defn params-vec [size]
@@ -92,27 +93,50 @@
                   ts&ls exprs)]
     (list params (conj clauses 'cond))))
 
+
+(defn extract-typed-annotation
+  [params]
+  (assert (seq params))
+  (let [[p & more] params]
+    (if (= (first more) :-)
+      [(second more) (drop 2 more)]
+      params)))
+
+(defn process-type-annotations
+  "Given a list of params generate the realized names and types"
+  [params]
+  (loop [in params
+         types []
+         ]
+    (if (empty? in)
+      out
+      (let [[type more] (extract-typed-annotation in)]
+        (recur more (conj out type))))))
+
+
 (defmacro defm
   [name & fdecl]
   (let [[name body] (name-with-attributes name fdecl)
         body (if (vector? (first body))
                (list body)
                body)
-        m (-> name
+        fn-meta (-> name
               meta
               (assoc :arglists (list 'quote (@#'clojure.core/sigs body))))
-        body (postwalk
+        body (postwalk                                      ;inline
                (fn [form]
                  (if (and (list? form) (= 'recur (first form)))
                    (list 'recur (cons 'vector (next form)))
                    form))
                body)
-        arity->m-pairs (vec (sort (group-by #(count (first %)) body)))
+        count-params (fn [[m e]] (count ( #(if (= (second m) :-) m)  m)))
+
+        arity->match&exprs (vec (sort (group-by count-params body)))
         conds (map (fn [[a pairs]]
                      (->cond a (map first pairs) (map rest pairs)))
-                   arity->m-pairs)]
+                   arity->match&exprs)]
     ;(clojure.pprint/pprint conds)
-    `(defn ~name ~m
+    `(defn ~name ~fn-meta
        ~@conds)))
 
 (defmacro defm-
