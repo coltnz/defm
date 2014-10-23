@@ -24,33 +24,17 @@
 (defn valid-tag? [env tag]
   (and (symbol? tag) (or (primitive-sym? tag) (class? (resolve env tag)))))
 
-(defn params-vec [size]
+(defn to-arg [idx]
+  (symbol (str "_" idx)))
+
+(defn default-args [size]
   "[_1 _2 .. _`size`]"
-  (vec (for [i (range size)] (symbol (str "_" (inc i))))))
+  (vec (for [i (range size)] (to-arg (inc i)))))
 
 (defn type? [match]
   (and (symbol? match)
        (or (class? (ns-resolve *ns* match))
            (primitive-sym? match))))
-
-(defn ->test [match args]
-  (let [test (map
-               (fn [m a]
-                 (cond
-                   (type? m) (list 'instance? m a)
-                   (symbol? m) :else
-                   (= m :else) :else
-                   :else (list '= a m)))
-               match args)
-        test (if (second test) (remove :else test) test)
-        test (if (second test) (cons 'and test) (first test))]
-    test))
-
-(defn ->locals [match params]
-  (vec (mapcat
-         (fn [m p]
-           (if (and (not (type? m)) (symbol? m)) [m p] []))
-         match params)))
 
 (defn bounds-err-> [match]
   (throw (RuntimeException. (str "Unreachable match " match))))
@@ -68,51 +52,50 @@
       (if (some? ms)
         (recur (first ms) (next ms) (conj bs b))))))
 
-(defn matches->tests&locals [matches params]
-  (check-bounds matches)
-  (let [ts&ls (map
-                (fn [match]
-                  (if (= :- (second match))
-                    [(->test (nnext match))
-                     (->locals (first match) params)]
-                    [(->test match params)
-                     (->locals match params)]))
-                matches)]
-    (if-not (filter #(or (true? %) (= :else %)) (first (butlast ts&ls)))
-      (conj ts&ls [(list :else `(throw (IllegalArgumentException. (str "No match for " ~params)))) []])
-      ts&ls)))
-
-(defn ->cond [arity matches exprs]
+(defn ->cond [arity matchers]
   "Each arity shares a cond.
    [ [String] [Integer] ] => (instance "
-  (let [params (params-vec arity)
-        ts&ls (doall (matches->tests&locals matches params))
-        clauses (mapcat
-                  (fn [[t ls] expr]
-                    (list t (if (empty? ls) (cons 'do expr) (concat `(let ~ls) expr))))
-                  ts&ls exprs)]
-    (list params (conj clauses 'cond))))
+  (println "TLE" arity matchers)
+  (let [args (default-args arity)
+        cond-clauses (mapcat
+                       (fn [matcher]
+                         (let [matches (:matches matcher)
+                               test (if (second matches)
+                                      (cons 'and (map :match matches))
+                                      (:match (first matches)))
+                               locals (:locals matcher)]
+                           (list test (if (empty? locals) (cons 'do (:expr matcher)) (concat `(let ~locals) (:expr matcher))))))
+                       matchers)]
+    (list args (conj cond-clauses 'cond)))
+  ;(if-not (filter #(or (true? %) (= :else %)) (first (butlast ts&ls)))
+  ;      (conj ts&ls [(list :else `(throw (IllegalArgumentException. (str "No match for " ~params)))) []])
+  ;      ts&ls))
+  )
 
 
-(defn extract-typed-annotation
-  [params]
-  (assert (seq params))
-  (let [[p & more] params]
-    (if (= (first more) :-)
-      [(second more) (drop 2 more)]
-      params)))
+(defn next-match [params a]
+  (let [[p & more] params
+        name (if (and (symbol? p) (not (type? p))) p nil)]
+    (cond
+      (= (first more) :-) [{:local [name a] :match (list 'instance? a (first (rest more)))} (drop 2 more)]
+      (some? name) [{:match :else} more]
+      (type? p) [{:match (list 'instance? p a)} more]
+      (= :else p) [{:match :else} more]
+      :else [{:match (list '= p a)} more])))
 
-(defn process-type-annotations
-  "Given a list of params generate the realized names and types"
-  [params]
-  (loop [in params
-         types []
-         ]
-    (if (empty? in)
-      out
-      (let [[type more] (extract-typed-annotation in)]
-        (recur more (conj out type))))))
-
+(defn ->matcher
+  "For a match extract the type hints and annotations, and names if supplied.
+  Nil serves as a placeholder"
+  [params expr]
+  (let [[arity matches]
+        (loop [ps params
+               ms []
+               a 0]
+          (if (empty? ps)
+            [a ms]
+            (let [[m more] (next-match ps (to-arg (inc a)))]
+              (recur more (conj ms m) (inc a)))))]
+    {:arity arity :matches matches :locals (vec (mapcat :local matches)) :expr expr}))
 
 (defmacro defm
   [name & fdecl]
@@ -121,21 +104,26 @@
                (list body)
                body)
         fn-meta (-> name
-              meta
-              (assoc :arglists (list 'quote (@#'clojure.core/sigs body))))
-        body (postwalk                                      ;inline
+                    meta
+                    (assoc :arglists (list 'quote (@#'clojure.core/sigs body))))
+        body (postwalk                                      ;todo inline
                (fn [form]
                  (if (and (list? form) (= 'recur (first form)))
                    (list 'recur (cons 'vector (next form)))
                    form))
                body)
-        count-params (fn [[m e]] (count ( #(if (= (second m) :-) m)  m)))
+        ;todo check shape
+        matchers (reduce (fn [matchers match-clause]
+                           (let [[match-params expr] match-clause]
+                             (conj matchers (->matcher match-params expr))))
+                         [] body)
 
-        arity->match&exprs (vec (sort (group-by count-params body)))
-        conds (map (fn [[a pairs]]
-                     (->cond a (map first pairs) (map rest pairs)))
-                   arity->match&exprs)]
-    ;(clojure.pprint/pprint conds)
+        arity->matchers (group-by #(:arity %) matchers)
+
+        conds (for [a (sort (keys arity->matchers))
+                    :let [matchers (arity->matchers a)]]
+                (->cond a matchers))]
+    (clojure.pprint/pprint conds)
     `(defn ~name ~fn-meta
        ~@conds)))
 
