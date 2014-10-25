@@ -7,11 +7,11 @@
 (deftest test-exprs
   (testing "Dispatch on expr value"
     (defm exprs
-          "Echo."
+          "Exprs."
           ([:a] "a")
           ([:b] "b")
           ([:c] "c")
-          ([:else] (str "-" _1)))                                ;hmm todo
+          ([_] (str "-" _1)))                                ;hmm todo
     (is (= "a" (exprs :a)))
     (is (= "b" (exprs :b)))
     (is (= "c" (exprs :c)))
@@ -33,7 +33,8 @@
           (["f"] "F")
           (["f" s] (str "f" s))
           ([s "f"] (str s "f"))
-          ([s] "thisiss"))
+          ([s1 "f" s2] (str s1 "f" s2))
+          ([s] s))
     (is (= "F" (symbol-fn "f")))
     (is (= "fS" (symbol-fn "f" "S")))
     (is (= "Sf" (symbol-fn "S" "f")))
@@ -42,13 +43,12 @@
 (deftest test-type-binds
   (testing "symbols can be restrict params to types"
     (defm binds-fn
-          ([s :- String] "F")
-          ([s :- String "not"] (str s "not"))
+          ([s :- String] s)
+          ([s :- String "S"] (str s "S"))
           ([d1 :- Double
             d2 :- Double] (str d1 d2)))
-    (is (= "F" (binds-fn "f")))
+    (is (= "F" (binds-fn "F")))
     (is (= "fS" (binds-fn "f" "S")))
-    (is (= "Sf" (binds-fn "S" "f")))
     (is (= "thisiss" (binds-fn "thisiss")))))
 
 (deftest mixed
@@ -56,7 +56,7 @@
     (defm mixed-fn
           ([File] "File")
           ([String] "String")
-          ([:else] (.getName (type _1))))
+          ([_] (.getName (type _1))))
     (is (= "String" (mixed-fn "a")))
     (is (= "File" (mixed-fn (File. "b"))))
     (is (= "java.net.URL" (mixed-fn (URL. "http://c"))))))
@@ -75,7 +75,7 @@
 (deftest test-private
   (testing "private macro"
     (defm- test1
-           ([_]))
+           ([_] :blah))
     (is (:private (meta #'test1)))))
 
 (deftest test-side-effects
@@ -96,8 +96,6 @@
           ([a b] "unknown."))
     (is (= "hello world" (-> #'hello meta :doc)))
     (is (= '([name] [a b])) (-> #'hello meta :arglists))))
-
-
 
 
 ;(deftest test-recursive-function

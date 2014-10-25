@@ -55,38 +55,45 @@
 (defn ->cond [arity matchers]
   "Each arity shares a cond.
    [ [String] [Integer] ] => (instance "
-  (println "TLE" arity matchers)
   (let [args (default-args arity)
         cond-clauses (mapcat
                        (fn [matcher]
                          (let [matches (:matches matcher)
-                               test (if (second matches)
-                                      (cons 'and (map :match matches))
-                                      (:match (first matches)))
+                               exprs (:exprs matcher)
+                               mexprs (map :mexpr matches)
+                               ;_ (println "matches " matches)
+                               ;_ (println "exprs " exprs)
+                               ;_ (println "mexprs " mexprs)
+
+                                       ;(list 'throw `(IllegalArgumentException. "no match")))
+
+                               test (if (second mexprs)     ;compound?
+                                      (cons 'and mexprs)
+                                      (first mexprs))
+                               ;_ (println "test " test)
                                locals (:locals matcher)]
-                           (list test (if (empty? locals) (cons 'do (:expr matcher)) (concat `(let ~locals) (:expr matcher))))))
+                           (if (seq locals)
+                             (concat (list test (concat (list 'let locals) exprs)))
+                             (concat (list test) exprs))))
                        matchers)]
-    (list args (conj cond-clauses 'cond)))
-  ;(if-not (filter #(or (true? %) (= :else %)) (first (butlast ts&ls)))
-  ;      (conj ts&ls [(list :else `(throw (IllegalArgumentException. (str "No match for " ~params)))) []])
-  ;      ts&ls))
-  )
+    (list args (conj cond-clauses 'cond))))
 
 
 (defn next-match [params a]
   (let [[p & more] params
         name (if (and (symbol? p) (not (type? p))) p nil)]
     (cond
-      (= (first more) :-) [{:local [name a] :match (list 'instance? a (first (rest more)))} (drop 2 more)]
-      (some? name) [{:match :else} more]
-      (type? p) [{:match (list 'instance? p a)} more]
-      (= :else p) [{:match :else} more]
-      :else [{:match (list '= p a)} more])))
+      (= '_ p) [{:mexpr true} more]
+      (= (first more) :-) [{:local [name a] :mexpr (list 'instance? (first (rest more)) a)} (drop 2 more)]
+      (some? name) [{:mexpr true :local [p a]} more]
+      (type? p) [{:mexpr (list 'instance? p a)} more]
+      (= :seq p) [{:mexpr (list '(seq a))}]
+      :else [{:mexpr (list '= a p)} more])))
 
 (defn ->matcher
   "For a match extract the type hints and annotations, and names if supplied.
   Nil serves as a placeholder"
-  [params expr]
+  [params exprs]
   (let [[arity matches]
         (loop [ps params
                ms []
@@ -95,7 +102,7 @@
             [a ms]
             (let [[m more] (next-match ps (to-arg (inc a)))]
               (recur more (conj ms m) (inc a)))))]
-    {:arity arity :matches matches :locals (vec (mapcat :local matches)) :expr expr}))
+    {:arity arity :params params :matches matches :locals (vec (mapcat :local matches)) :exprs exprs}))
 
 (defmacro defm
   [name & fdecl]
@@ -112,14 +119,15 @@
                    (list 'recur (cons 'vector (next form)))
                    form))
                body)
+        _ (clojure.pprint/pprint body)
+        _ (println "end body\n")
+
         ;todo check shape
         matchers (reduce (fn [matchers match-clause]
-                           (let [[match-params expr] match-clause]
-                             (conj matchers (->matcher match-params expr))))
+                           (let [[match-params & exprs] match-clause]
+                             (conj matchers (->matcher match-params exprs))))
                          [] body)
-
         arity->matchers (group-by #(:arity %) matchers)
-
         conds (for [a (sort (keys arity->matchers))
                     :let [matchers (arity->matchers a)]]
                 (->cond a matchers))]
@@ -131,3 +139,5 @@
   "As defm, but not public"
   [name & decls]
   (list* `defm (vary-meta name assoc :private true) decls))
+
+
