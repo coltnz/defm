@@ -52,25 +52,24 @@
       (if (some? ms)
         (recur (first ms) (next ms) (conj bs b))))))
 
+(defn ->test [mexprs]
+  ;only need 1 true
+  (println "mexprs " mexprs)
+  (let [mexprs (if (second mexprs) (remove #(true? %) mexprs) mexprs)]
+    (if (second mexprs)
+      (cons 'and mexprs)
+      (first mexprs))))
+
 (defn ->cond [arity matchers]
   "Each arity shares a cond.
    [ [String] [Integer] ] => (instance "
+  (println "am " arity matchers)
   (let [args (default-args arity)
         cond-clauses (mapcat
                        (fn [matcher]
                          (let [matches (:matches matcher)
                                exprs (:exprs matcher)
-                               mexprs (map :mexpr matches)
-                               ;_ (println "matches " matches)
-                               ;_ (println "exprs " exprs)
-                               ;_ (println "mexprs " mexprs)
-
-                                       ;(list 'throw `(IllegalArgumentException. "no match")))
-
-                               test (if (second mexprs)     ;compound?
-                                      (cons 'and mexprs)
-                                      (first mexprs))
-                               ;_ (println "test " test)
+                               test (->test (map :mexpr matches))
                                locals (:locals matcher)]
                            (if (seq locals)
                              (concat (list test (concat (list 'let locals) exprs)))
@@ -87,7 +86,7 @@
       (= (first more) :-) [{:local [name a] :mexpr (list 'instance? (first (rest more)) a)} (drop 2 more)]
       (some? name) [{:mexpr true :local [p a]} more]
       (type? p) [{:mexpr (list 'instance? p a)} more]
-      (= :seq p) [{:mexpr (list '(seq a))}]
+      (= :seq p) [{:mexpr (list 'not (list 'empty? a))}]
       :else [{:mexpr (list '= a p)} more])))
 
 (defn ->matcher
@@ -113,15 +112,13 @@
         fn-meta (-> name
                     meta
                     (assoc :arglists (list 'quote (@#'clojure.core/sigs body))))
-        body (postwalk                                      ;todo inline
+        body (postwalk                                      ;inline?
                (fn [form]
                  (if (and (list? form) (= 'recur (first form)))
                    (list 'recur (cons 'vector (next form)))
                    form))
                body)
-        _ (clojure.pprint/pprint body)
-        _ (println "end body\n")
-
+        _ (println body)
         ;todo check shape
         matchers (reduce (fn [matchers match-clause]
                            (let [[match-params & exprs] match-clause]
