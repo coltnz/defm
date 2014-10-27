@@ -6,4 +6,4 @@
   :java-source-paths ["src/java"]
   :javac-options ["-target" "1.7" "-source" "1.7"]
   :dependencies [[org.clojure/clojure "1.6.0"]
-                 [org.clojure/tools.macro "0.1.2"]])
+                 [org.clojure/core.match "0.2.1"]])
