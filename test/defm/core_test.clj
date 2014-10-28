@@ -27,12 +27,21 @@
     (is (= "c" (exprs :c)))
     (is (= "other" (exprs "other")))))
 
+(deftest test-nil
+  (testing "Dispatch on expr value"
+    (defm nil-chk
+          ([:a] "a")
+          ([nil] (str _1))
+          ([["b" nil]] _1))
+    (is (= "" (nil-chk nil)))
+    (is (= ["b" nil] (nil-chk ["b" nil])))))
+
 (deftest test-patterns
   (testing "Patterns work as a match and error if not str expr"
     (defm patmatch
           [#"x"] :x))
-    (is (= :x (patmatch "x")))
-    (is (thrown? ClassCastException (patmatch 4))))
+  (is (= :x (patmatch "x")))
+  (is (thrown? ClassCastException (patmatch 4))))
 
 (deftest test-symbols
   (testing "symbols are bound to params"
@@ -120,13 +129,18 @@
     (is (= 3 (mw 1 2 3)))
     (is (= 1 (mw 4)))))
 
-(deftest test-unreachable-symbols
+(deftest test-unreachable-exprs
   (testing "unreachable clauses with symbols"
     (is (thrown? RuntimeException (eval '(defm un1 ([:a] 1) ([:b] 2) ([:a] 2)))))
+    (is (thrown? RuntimeException (eval '(defm un1 (["C" :a] 1) ([:b] 2) (["C" :a] 2)))))))
+
+(deftest test-unreachable-symbols
+  (testing "unreachable clauses with symbols"
     (is (thrown? RuntimeException (eval '(defm un2 ([a] 1) ([:a] 2)))))
     (is (thrown? RuntimeException (eval '(defm un3 ([a] 1) ([b] 2)))))
     (is (thrown? RuntimeException (eval '(defm un3 ([_] 1) ([b] 2)))))
     (is (thrown? RuntimeException (eval '(defm un3 ([b] 1) ([_] 2)))))
+    (is (thrown? RuntimeException (eval '(defm un3 ([:else] 1) ([_] 2)))))
     (is (thrown? RuntimeException (eval '(defm un3 ([:a] 0) ([:else] 1) ([:else] 2)))))))
 
 (deftest test-unreachable-types
@@ -149,21 +163,22 @@
 ;    (is (= "a [:b :c]" (mseq :a [:b :c])))
 ;    (is (= ":a s" (mseq [:a] :b)))))
 ;
-;(deftest test-recursive-function
-;  (testing "accum"
-;    (defm accum
-;      ([0 ret] ret)
-;      ([n ret] (recur (dec n) (+ n ret)))
-;      ([n] (recur n 0)))                  ;fails here todo
-;    (is (= 6 (accum 3)))
-;    (is (= 5050 (accum 100)))))
-;  (testing "fib"
-;    (defm fib
-;      ([0] 0)
-;      ([1] 1)
-;      ([n] (+ (fib (- n 1)) (fib (- n 2)))))
-;    (is (= 55 (fib 10)))))
-;
+(deftest test-recursive
+  (testing "count down"
+    (defm count-down
+          ([0] "zero!")
+          ([n] (println n)
+           (recur (dec n))))
+    (is (= (count-down 0) "zero!"))
+    (with-out-str (is (= (count-down 6) "zero!"))))
+  (testing "fib"
+    (defm fib
+          ([0] 0)
+          ([1] 1)
+          ([n] (+ (fib (- n 1)) (fib (- n 2)))))
+    (is (= (fib 0) 0))
+    (is (= (fib 1) 1))
+    (is (= (fib 10) 55))))
 
 ;(deftest test-vector
 ;  (testing "test3"
@@ -180,7 +195,7 @@
 ;          ([([1 2] :seq)] :a1)
 ;          ([([1 2 nil nil nil] :seq)] :a2))
 ;        (is (= :a0 (test2 [1])))))
-    ;(is (= :a2 (test2 [1 2 nil nil nil])))))
+;(is (= :a2 (test2 [1 2 nil nil nil])))))
 
 
 ; PROBLEM CASES

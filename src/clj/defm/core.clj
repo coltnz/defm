@@ -1,6 +1,5 @@
 (ns defm.core
-  (:import [java.util.regex Pattern])
-  (:require [clojure.walk :refer [postwalk]]))
+  (:import [java.util.regex Pattern]))
 
 ;inlined from tools.macro
 (defn name-with-attributes
@@ -89,14 +88,18 @@
                              (concat (list test (concat (list 'let locals) exprs)))
                              (concat (list test) exprs))))
                        matchers)]
-    (list args (conj cond-clauses 'cond))))
-
+    (let [last-test (first (butlast cond-clauses))]
+      (if (or (= last-test :else) (= last-test true))
+        (list args (conj cond-clauses 'cond))
+        (list args (conj (concat cond-clauses
+                                 [:else `(throw (IllegalArgumentException. (str "Unexpected match " ~args)))]) 'cond))))))
 
 (defn next-match [params a]
   (let [[p & more] params
         name (if (and (symbol? p) (not (type? p))) p nil)]
     (cond
       (= '_ p) [{:mexpr true :bounds ::symbol} more]
+      (= p :else) [{:mexpr :else :bounds ::symbol} more]
       (= (first more) :-) [{:local [name a] :mexpr (list 'instance? (second more) a) :bounds (second more)} (drop 2 more)]
       (some? name) [{:local [p a] :mexpr true :bounds ::symbol} more]
       (type? p) [{:mexpr (list 'instance? p a) :bounds p} more]
@@ -129,13 +132,6 @@
         fn-meta (-> name
                     meta
                     (assoc :arglists (list 'quote (@#'clojure.core/sigs body))))
-        body (postwalk                                      ;inline?
-               (fn [form]
-                 (if (and (list? form) (= 'recur (first form)))
-                   (list 'recur (cons 'vector (next form)))
-                   form))
-               body)
-        _ (println "body: " body)
         ;todo check shape
         matchers (reduce (fn [matchers match-clause]
                            (let [[match-params & exprs] match-clause]
@@ -145,8 +141,6 @@
         conds (for [a (sort (keys arity->matchers))
                     :let [matchers (arity->matchers a)]]
                 (->cond a matchers))]
-    (println "conds:")
-    (clojure.pprint/pprint conds)
     `(defn ~name ~fn-meta
        ~@conds)))
 
