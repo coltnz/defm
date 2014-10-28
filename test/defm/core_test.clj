@@ -1,6 +1,7 @@
 (ns defm.core-test
   (:import (java.io File)
-           (java.net URL))
+           (java.net URL)
+           [clojure.lang ArityException Compiler$CompilerException])
   (:require [clojure.test :refer :all]
             [defm.core :refer :all]))
 
@@ -35,6 +36,17 @@
           ([["b" nil]] _1))
     (is (= "" (nil-chk nil)))
     (is (= ["b" nil] (nil-chk ["b" nil])))))
+
+(deftest test-shape
+  (testing "Test clause configuration"
+    (is (thrown? ArityException (eval '(defm))))
+    (is (thrown? IllegalArgumentException (eval '(defm []))))
+    (is (= :b (do (defm blah [:a] :b) (blah :a))))
+    ;(is (thrown? IllegalArgumentException (eval '(defm blah2 []))))
+    (is (= ((defm blah [] [])) []))))
+
+;(is (thrown? RuntimeException (eval '(defm un1 (["C" :a] 1) ([:b] 2) (["C" :a] 2)))))))
+
 
 (deftest test-patterns
   (testing "Patterns work as a match and error if not str expr"
@@ -180,6 +192,16 @@
     (is (= (fib 1) 1))
     (is (= (fib 10) 55))))
 
+
+(deftest test-map-dest
+  (testing "count down"
+    (defm mapmatch
+          ([{:c a}] a)
+          ([:else] :no-match)))
+  (is (= 1 (mapmatch {:c 1}))))
+
+
+
 ;(deftest test-vector
 ;  (testing "test3"
 ;    (defm test3
@@ -199,3 +221,9 @@
 
 
 ; PROBLEM CASES
+
+(let [_1 {:c 'a}]
+  (cond
+    (map? _1) (let [{:c 'a} _1] a)
+    :else :no-match
+    :else (throw (java.lang.IllegalArgumentException. (clojure.core/str "No match for " [_1])))))

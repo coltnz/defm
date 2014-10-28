@@ -1,9 +1,13 @@
 (ns defm.core
-  (:import [java.util.regex Pattern]))
+  (:import [java.util.regex Pattern]
+           [clojure.lang Symbol]))
 
 ;inlined from tools.macro
 (defn name-with-attributes
   [name macro-args]
+  (if (instance? Symbol name)
+    nil
+    (throw (IllegalArgumentException. "First argument to defm must be a symbol")))
   (let [[docstring macro-args] (if (string? (first macro-args))
                                  [(first macro-args) (next macro-args)]
                                  [nil macro-args])
@@ -31,7 +35,6 @@
   "[_1 _2 .. _`size`]"
   (vec (for [i (range size)] (to-arg (inc i)))))
 
-
 (defn pattern? [match]
   (= Pattern (type match)))
 
@@ -47,7 +50,6 @@
   (every? true?
           (map
             (fn [p b]
-              ;(println "checking " p b)
               (cond
                 (= b p) true
                 (= p ::symbol) true
@@ -65,8 +67,8 @@
 (defn check-bounds [matchers]
   (reduce #(process-bounds %1 (:bounds %2) %2) [] matchers))
 
-;; To make a valid from mexprs we merely need to `and` if plural and add :else if no default clause.
-;; Additionally remove redundant `true` matches.
+;; To make a valid test from mexprs we merely need to `and` if plural and add :else if no default clause.
+;; Additionally we remove redundant `true` matches.
 (defn ->test [mexprs]
   (let [mexprs (if (second mexprs) (remove #(true? %) mexprs) mexprs)]
     (if (second mexprs)
@@ -74,8 +76,6 @@
       (or (first mexprs) true))))
 
 (defn ->cond [arity matchers]
-  "Each arity shares a cond.
-   [ [String] [Integer] ] => (instance "
   (check-bounds matchers)
   (let [args (default-args arity)
         cond-clauses (mapcat
@@ -92,7 +92,7 @@
       (if (or (= last-test :else) (= last-test true))
         (list args (conj cond-clauses 'cond))
         (list args (conj (concat cond-clauses
-                                 [:else `(throw (IllegalArgumentException. (str "Unexpected match " ~args)))]) 'cond))))))
+                                 [:else `(throw (IllegalArgumentException. (str "No match for " ~args)))]) 'cond))))))
 
 (defn next-match [params a]
   (let [[p & more] params
@@ -105,6 +105,7 @@
       (type? p) [{:mexpr (list 'instance? p a) :bounds p} more]
       (= :seq p) [{:mexpr (list 'not (list 'empty? a)) :bounds ::seq}]
       (pattern? p) [{:mexpr (list 're-matches p a) :bounds ::pattern}]
+      (map? p) [{:local [p a] :mexpr (list 'map? a) :bounds ::map}]
       :else [{:mexpr (list '= a p) :bounds p} more])))
 
 (defn ->matcher
@@ -132,7 +133,9 @@
         fn-meta (-> name
                     meta
                     (assoc :arglists (list 'quote (@#'clojure.core/sigs body))))
-        ;todo check shape
+        ;_ (map #(if (next body)
+        ;         (second body)
+        ;         (throw (IllegalArgumentException. "defm requires an even number of forms"))))
         matchers (reduce (fn [matchers match-clause]
                            (let [[match-params & exprs] match-clause]
                              (conj matchers (->matcher match-params exprs))))
@@ -141,11 +144,11 @@
         conds (for [a (sort (keys arity->matchers))
                     :let [matchers (arity->matchers a)]]
                 (->cond a matchers))]
-    `(defn ~name ~fn-meta
-       ~@conds)))
+        `(defn ~name ~fn-meta
+           ~@conds)))
 
 (defmacro defm-
-  "As defm, but not public"
+  "same as defm, yielding non-public def"
   [name & decls]
   (list* `defm (vary-meta name assoc :private true) decls))
 
