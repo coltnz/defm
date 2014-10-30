@@ -1,6 +1,10 @@
 (ns defm.core
+  (:require [clojure.walk :as walk])
   (:import [java.util.regex Pattern]
-           [clojure.lang Symbol]))
+           [clojure.lang Symbol ILookup Sequential]))
+
+(defn debug [a-defm]
+  (clojure.pprint/pprint (macroexpand-1 a-defm)))
 
 ;inlined from tools.macro
 (defn name-with-attributes
@@ -38,10 +42,17 @@
 (defn pattern? [match]
   (= Pattern (type match)))
 
+(defn map-like? [match]
+  (instance? ILookup match))
+
+(defn seq-like? [match]
+  (instance? Sequential match))
+
 (defn type? [match]
   (and (symbol? match)
        (or (class? (ns-resolve *ns* match))
            (primitive-sym? match))))
+
 
 (defn bounds-err-> [match]
   (throw (RuntimeException. (str "Unreachable match " match))))
@@ -51,6 +62,7 @@
           (map
             (fn [p b]
               (cond
+                (and (class? b) (class? p) (.isAssignableFrom b p)) true
                 (= b p) true
                 (= p ::symbol) true
                 :else false))
@@ -89,10 +101,24 @@
                              (concat (list test) exprs))))
                        matchers)]
     (let [last-test (first (butlast cond-clauses))]
-      (if (or (= last-test :else) (= last-test true))
+      (if (or (= last-test [:else]) (= last-test true))
         (list args (conj cond-clauses 'cond))
         (list args (conj (concat cond-clauses
-                                 [:else `(throw (IllegalArgumentException. (str "No match for " ~args)))]) 'cond))))))
+                                 [:else `(throw (IllegalArgumentException.
+                                                  (str "No match for " ~args)))]) 'cond))))))
+
+(defn mask [what when? with]
+  (walk/postwalk #(if (when? %) with %) what))
+
+(defn chk-type [type coll] (every? true? (map #(instance? %1 %2) type coll)))
+(defn chk-types [types coll] (and (= (count types) (count coll)) (every? true? (map #(instance? %1 %2) types coll))))
+
+;
+;[a :- Long b :- String]
+;[String Long]
+;[a b [String]]
+;[a :- Long b :- Long (or c String Long)]
+
 
 (defn next-match [params a]
   (let [[p & more] params
@@ -103,15 +129,18 @@
       (= (first more) :-) [{:local [name a] :mexpr (list 'instance? (second more) a) :bounds (second more)} (drop 2 more)]
       (some? name) [{:local [p a] :mexpr true :bounds ::symbol} more]
       (type? p) [{:mexpr (list 'instance? p a) :bounds p} more]
-      (= :seq p) [{:mexpr (list 'not (list 'empty? a)) :bounds ::seq}]
-      (pattern? p) [{:mexpr (list 're-matches p a) :bounds ::pattern}]
-      (map? p) [{:local [p a] :mexpr (list 'map? a) :bounds ::map}]
+      (pattern? p) [{:mexpr (list 're-matches p a) :bounds p} more]
+      (and (seq-like? p) (type? (first p))) [{:mexpr (list 'and (list 'seq-like? a) (list 'defm.core/chk-types p a)) :bounds p} more]
+      (and (seq-like? p) (= :- (second p))) [{:mexpr  (list 'and (list 'seq-like? a) (list 'defm.core/chk-type (mapv last (partition 3 p) 'a)))
+                                              :bounds (map last (partition 3 more) p)} more]
+      (map-like? p) [{:local [p a] :mexpr (list 'instance? ILookup a) :bounds (mask p symbol? ::symbol)} more]
+      (= :seq p) [{:mexpr (list 'not (list 'instance? Sequential a)) :bounds ::seq} more]
       :else [{:mexpr (list '= a p) :bounds p} more])))
 
 (defn ->matcher
-  "For a match extract the type hints and annotations, and names if supplied.
-  Nil serves as a placeholder"
+  "For a match extract the type hints and annotations, and names if supplied."
   [params exprs]
+
   (let [[arity matches]
         (loop [ps params
                ms []
@@ -119,6 +148,7 @@
           (if (empty? ps)
             [a ms]
             (let [[m more] (next-match ps (to-arg (inc a)))]
+              (assert some? more)
               (recur more (conj ms m) (inc a)))))
         locals (mapcat :local matches)
         bounds (map :bounds matches)]
@@ -144,8 +174,8 @@
         conds (for [a (sort (keys arity->matchers))
                     :let [matchers (arity->matchers a)]]
                 (->cond a matchers))]
-        `(defn ~name ~fn-meta
-           ~@conds)))
+    `(defn ~name ~fn-meta
+       ~@conds)))
 
 (defmacro defm-
   "same as defm, yielding non-public def"

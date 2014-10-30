@@ -5,6 +5,8 @@
   (:require [clojure.test :refer :all]
             [defm.core :refer :all]))
 
+(set! *warn-on-reflection* true)
+
 (deftest test-fn
   (testing "Normal function."
     (defm square
@@ -29,13 +31,13 @@
     (is (= "other" (exprs "other")))))
 
 (deftest test-nil
-  (testing "Dispatch on expr value"
+  (testing "Match on nil"
     (defm nil-chk
           ([:a] "a")
           ([nil] (str _1))
-          ([["b" nil]] _1))
+          ([[a b]] _1))
     (is (= "" (nil-chk nil)))
-    (is (= ["b" nil] (nil-chk ["b" nil])))))
+    (is (= ["a" nil] (nil-chk ["a" nil])))))
 
 (deftest test-shape
   (testing "Test clause configuration"
@@ -90,7 +92,7 @@
     (defm mixed-fn
           ([File] (str "File " _1))
           ([String] (str "String " _1))
-          ([_] (.getName (type _1))))
+          ([_] (.getName ^Class (type _1))))
     (is (= "String aString" (mixed-fn "aString")))
     (is (= "File aFile" (mixed-fn (File. "aFile"))))
     (is (= "java.net.URL" (mixed-fn (URL. "http://url"))))))
@@ -192,38 +194,41 @@
     (is (= (fib 1) 1))
     (is (= (fib 10) 55))))
 
+;(deftest test-vector-types
+;  (testing "vector types"
+;    (defm vec-types
+;          ([[String]] :WTF)
+;          ([[Number]] (type (first _1)))
+;          ([[a :- String b :- Long]] [(type a) (type b)]))
+;    (is (= String (vec-types ["1" "2"])))
+;    (is (= Long (vec-types [4 3 2 1])))
+;    (is (= [String Long] (vec-types ["s" 5])))))
 
-(deftest test-map-dest
-  (testing "count down"
-    (defm mapmatch
-          ([{:c a}] a)
-          ([:else] :no-match)))
-  (is (= 1 (mapmatch {:c 1}))))
 
+;(deftest test-map-types
+;  (testing "map types"
+;    (defm mapmatch
+;          ([{a :c}] a)
+;          ([:else] :no-match)))
+;  (is (= 1 (mapmatch {:c 1}))))
 
-
-;(deftest test-vector
-;  (testing "test3"
-;    (defm test3
-;          ;([[_ _ 2]] :a0)
-;          ([[1 1 3]] :a1)
-;          ([[1 2 3]] :a2))
-;    (is (= :a2 (test3 [1 2 3])))
-;    ;(is (= :a0 (test3 [3 3 2])))
-;    (is (= :a1 (test3 [1 1 3]))))
-;  (testing "test2"
-;    (defm test2
-;          ([([1] :seq)] :a0)
-;          ([([1 2] :seq)] :a1)
-;          ([([1 2 nil nil nil] :seq)] :a2))
-;        (is (= :a0 (test2 [1])))))
-;(is (= :a2 (test2 [1 2 nil nil nil])))))
 
 
 ; PROBLEM CASES
 
-(let [_1 {:c 'a}]
-  (cond
-    (map? _1) (let [{:c 'a} _1] a)
-    :else :no-match
-    :else (throw (java.lang.IllegalArgumentException. (clojure.core/str "No match for " [_1])))))
+;(deftest test-map-dest
+;  (testing "count down"
+;    (defm mapmatch
+;          ([{a :c}] a)
+;          ([:else] :no-match)))
+;  (is (= 1 (mapmatch {:c 1}))))
+
+;(deftest test-vector-dest
+;  (testing "test3"
+;    (defm test3
+;          ([[_ _ 2]] :a0)
+;          ([[1 1 3]] :a1)
+;          ([[1 2 3]] :a2))
+;    (is (= :a2 (test3 [1 2 3])))
+;    ;(is (= :a0 (test3 [3 3 2])))
+;    (is (= :a1 (test3 [1 1 3])))))
