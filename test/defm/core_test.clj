@@ -41,10 +41,10 @@
 
 (deftest test-shape
   (testing "Test clause configuration"
-    (is (thrown? ArityException (eval '(defm))))
+    ;(is (thrown? ArityException (eval '(defm))))
     (is (thrown? IllegalArgumentException (eval '(defm []))))
     (is (= :b (do (defm blah [:a] :b) (blah :a))))
-    ;(is (thrown? IllegalArgumentException (eval '(defm blah2 []))))
+    (is (thrown? IllegalArgumentException (eval '(defm blah2 []))))
     (is (= ((defm blah [] [])) []))))
 
 ;(is (thrown? RuntimeException (eval '(defm un1 (["C" :a] 1) ([:b] 2) (["C" :a] 2)))))))
@@ -194,41 +194,61 @@
     (is (= (fib 1) 1))
     (is (= (fib 10) 55))))
 
-;(deftest test-vector-types
-;  (testing "vector types"
-;    (defm vec-types
-;          ([[String]] :WTF)
-;          ([[Number]] (type (first _1)))
-;          ([[a :- String b :- Long]] [(type a) (type b)]))
-;    (is (= String (vec-types ["1" "2"])))
-;    (is (= Long (vec-types [4 3 2 1])))
-;    (is (= [String Long] (vec-types ["s" 5])))))
+(deftest test-typed-vectors
+  (testing "typed vectors"
+    (defn walk-types [f]
+      (clojure.walk/postwalk
+        (fn [x]
+          (if (not (or (map? x) (sequential? x)))
+            (type x)
+            (if (type? x)
+              (ns-resolve *ns* x) x))) f))
+    (defm typed-vecs
+          ([[String]] {:strings (walk-types _1)})
+          ([[Number]] {:numbers (walk-types _1)})
+          ([[Long] [Number]] {:numberss (map walk-types [_1 _2])})
+          ([[Long] [Number] [[[Double]]]] {:numberssss (map walk-types [_1 _2 _3])}))
+    (is (= {:strings [String String]} (typed-vecs ["a" "b"])))
+    (is (= {:numbers [Long Long Long Long]} (typed-vecs [4 3 2 1])))
+    (is (= {:numberss [[Long Long] [Long Long]]} (typed-vecs [1 2] [3 4])))
+    (is (= {:numberssss [[Long Long] [Long] [[[Double]]]]} (typed-vecs [1 2] [3] [[[4.0]]])))))
+
+(deftest test-value-vectors
+  (testing "value vectors"
+    (defm val-vecs
+          ([[a]] a)
+          ([[a b]] [a b])
+          ([[a b & c]] c)
+          )
+    (is (= :a (val-vecs [1])))
+    (is (= [:a ] :b (val-vecs [:a :b])))
+    (is (= [3 4 5 6] (val-vecs [1 2 3 4 5 6])))))
 
 
-;(deftest test-map-types
-;  (testing "map types"
-;    (defm mapmatch
-;          ([{a :c}] a)
-;          ([:else] :no-match)))
-;  (is (= 1 (mapmatch {:c 1}))))
+  ;(deftest test-map-types
+  ;  (testing "map types"
+  ;    (defm mapmatch
+  ;          ([{a :c}] a)
+  ;          ([:else] :no-match)))
+  ;  (is (= 1 (mapmatch {:c 1}))))
 
 
 
-; PROBLEM CASES
+  ; PROBLEM CASES
 
-;(deftest test-map-dest
-;  (testing "count down"
-;    (defm mapmatch
-;          ([{a :c}] a)
-;          ([:else] :no-match)))
-;  (is (= 1 (mapmatch {:c 1}))))
+  ;(deftest test-map-dest
+  ;  (testing "count down"
+  ;    (defm mapmatch
+  ;          ([{a :c}] a)
+  ;          ([:else] :no-match)))
+  ;  (is (= 1 (mapmatch {:c 1}))))
 
-;(deftest test-vector-dest
-;  (testing "test3"
-;    (defm test3
-;          ([[_ _ 2]] :a0)
-;          ([[1 1 3]] :a1)
-;          ([[1 2 3]] :a2))
-;    (is (= :a2 (test3 [1 2 3])))
-;    ;(is (= :a0 (test3 [3 3 2])))
-;    (is (= :a1 (test3 [1 1 3])))))
+  ;(deftest test-vector-dest
+  ;  (testing "test3"
+  ;    (defm test3
+  ;          ([[_ _ 2]] :a0)
+  ;          ([[1 1 3]] :a1)
+  ;          ([[1 2 3]] :a2))
+  ;    (is (= :a2 (test3 [1 2 3])))
+  ;    ;(is (= :a0 (test3 [3 3 2])))
+  ;    (is (= :a1 (test3 [1 1 3])))))

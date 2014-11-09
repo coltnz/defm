@@ -8,4 +8,6 @@
             :dependencies [[org.clojure/clojure "1.6.0"]
                            [org.clojure/core.match "0.2.1"]]
             :profiles {:dev {:source-paths ["dev"]
-                             :dependencies [[org.clojure/core.match "0.2.1"]]}})
+                             :dependencies [[org.clojure/core.match "0.2.1"]
+                                            [defun "0.2.0-RC"]
+                                            [prismatic/schema "0.3.2"]]}})
