@@ -47,12 +47,14 @@
 (defn valid-tag? [env tag]
   (and (symbol? tag) (or (primitive-sym? tag) (class? (resolve env tag)))))
 
-(defn to-arg [idx]
+(defn to-param [idx]
   (symbol (str "_" idx)))
 
-(defn default-args [size]
+(defn params-vec [size rest-param?]
   "[_1 _2 .. _`size`]"
-  (vec (for [i (range size)] (to-arg (inc i)))))
+  (let [params (for [i (range size)]
+                 (to-param (inc i)))]
+    (vec (if rest-param? (concat (butlast params) ['& (last params)]) params))))
 
 (defn pattern? [match]
   (= Pattern (type match)))
@@ -101,7 +103,7 @@
 
 (defn ->cond [arity matchers]
   (check-bounds matchers)
-  (let [args (default-args arity)
+  (let [args (params-vec arity (true? (:rest-param (last matchers))))
         cond-clauses (mapcat
                        (fn [matcher]
                          (let [matches (:matches matcher)
@@ -135,6 +137,7 @@
 
 (defn seq-match [arg param matches]
   (println arg param)
+  (prn "seq matches " matches)
   (let [
         seq-mexprs (list 'and (list 'sequential? param) (list '= (list 'count param) (count matches)))
         mexprs (remove true? (map :mexpr matches))          ;guaranteed at least sequential condition
@@ -152,13 +155,14 @@
 (declare type-match)
 
 (defn next-match [args next-param]
+  (prn "nm : " args next-param)
   (let [[arg & more] args
         name (if (and (symbol? arg) (not (type? arg))) arg nil)
         match (or
                 ;(type-match next-param arg more)
                 (cond
                   (= '_ arg) {:mexpr true :bounds ::symbol :unmatched more}
-                  (= '& arg) (if (second more) :error {:locals [(first more) next-param] :mexpr ::restarg :bounds ::restarg})
+                  (= '& arg) (if (second more) :error {:locals [(first more) next-param] :mexpr true :bounds ::rest-param :unmatched nil})
                   (= arg :else) {:mexpr :else :bounds ::symbol :unmatched more}
                   (= (first more) :-) {:locals [name next-param] :mexpr (list 'instance? (second more) next-param) :bounds (second more) :unmatched (drop 2 more)}
                   (some? name) {:locals [arg next-param] :mexpr true :bounds ::symbol :unmatched more}
@@ -173,6 +177,7 @@
                                                         arg arg
                                                         idx 0]
                                                    (let [m (next-match arg `(nth ~next-param ~idx))
+                                                         _ (println "M " m)
                                                          um (:unmatched m)]
                                                      (if (empty? um)
                                                        (conj ms m)
@@ -180,23 +185,27 @@
                   (map-like? arg) {:locals [arg next-param] :mexpr (list 'instance? ILookup next-param) :bounds (mask arg symbol? ::symbol) :unmatched more}
                   (= :seq arg) {:mexpr (list 'not (list 'instance? Sequential next-param)) :bounds ::seq :unmatched more}
                   :else {:mexpr (list '= next-param arg) :bounds arg :unmatched more}))]
-    (if (nil? match) {:mexpr (list '= next-param arg) :bounds arg }  match)))
+    (if (nil? match) {:mexpr (list '= next-param arg) :bounds arg} match)))
 
 (defn ->matcher
   "For a match extract the type hints and annotations, and names if supplied."
   [params exprs]
   (println "\n")
+  (prn "Matching " params " against " exprs)
   (let [[arity matches] (loop [ps params
                                ms []
                                a 0]
                           (if (empty? ps)
                             [a ms]
-                            (let [m (next-match ps (to-arg (inc a)))]
+                            (let [m (next-match ps (to-param (inc a)))]
+                              (prn "m " m)
+                              (prn "un " (:unmatched m))
                               (assert some? (:unmatched m))
                               (recur (:unmatched m) (conj ms m) (inc a)))))
         locals (mapcat :locals matches)
-        bounds (map :bounds matches)]
-    {:arity arity :matches matches :bounds bounds :params params :locals locals :exprs exprs}))
+        bounds (map :bounds matches)
+        rest-param (some #(= (:bounds %) ::rest-param) matches)]
+    {:arity arity :matches matches :bounds bounds :params params :locals locals :exprs exprs :rest-param rest-param}))
 
 
 

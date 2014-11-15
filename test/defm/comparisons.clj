@@ -34,3 +34,8 @@
 ;    b :- Long] b))
 ;(dotimes [_ 3] (time (doall (map #(apply hi4 %) data2))))
 
+(defn testa
+  ([a] a)
+  ([a b] b)
+  ([a b & c] c)
+  )
