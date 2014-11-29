@@ -114,7 +114,10 @@
                                test (->test (map :mexpr matches))
                                locals (:locals matcher)]
                            (if (seq locals)
-                             (concat (list test (concat (list 'let (vector locals params-vec)) exprs)))
+                           ;if one local we can shed a vec
+                             (if (second locals)
+                               (concat (list test (concat (list 'let (vector locals params-vec)) exprs)))
+                               (concat (list test (concat (list 'let (vector (first locals) (first params-vec))) exprs))))
                              (concat (list test) exprs))))
                        matchers)]
     (let [last-test (first (butlast cond-clauses))]
@@ -131,38 +134,22 @@
 (defn type-check [type coll] (every? true? (map #(instance? type %) coll)))
 (defn types-check [types coll] '(and (= (count types) (count coll)) (every? true? (map #(instance? %1 %2) types coll))))
 
-;
-;[a :- Long b :- String]
-;[String Long]
-;[a b [String]]
-;[a :- Long b :- Long (or c String Long)]
 
-(defn seq-type-match [arg param matches]
-  (println arg param)
-  (prn "seq matches " matches)
-  (let [rest-param (some #(= (:bounds %) ::rest-param) matches)
-        seq-mexprs (list 'and (list 'sequential? param)
-                         (:mexpr (first matches)))]
-    (println " seq-match matches " seq-mexprs)
-    {:mexpr     seq-mexprs
-     :locals    nil
-     :bounds    arg
-     :unmatched (:unmatched (last matches))}))
+(defn seq-types-match [arg param more]
+  {:mexpr     `(type-check (first ~arg) ~param)
+   :locals    nil
+   :bounds    arg
+   :unmatched more})
 
-(defn seq-match [arg param matches]
-  (println arg param)
-  (prn "seq matches " matches)
+(defn seq-values-match [matches arg param]
   (let [rest-param (some #(= (:bounds %) ::rest-param) matches)
         arg-count-test (list (if rest-param '>= '=) (list 'count param) (count matches))
         seq-mexprs (list 'and (list 'sequential? param)
                          arg-count-test)
         mexprs (remove true? (map :mexpr matches))          ;guaranteed at least sequential condition
-        _ (println "AT THS POINT seq:" seq-mexprs ":mex " mexprs)
-
         seq-mexprs (if (seq mexprs)
                      (concat seq-mexprs mexprs)
                      seq-mexprs)
-        _ (println "NOW" seq-mexprs)
         sub-locals (vec (remove nil? (mapcat :locals matches)))
         locals (if (empty? sub-locals) nil [sub-locals])]
     (println "seq-match locals  " locals)
@@ -172,42 +159,66 @@
      :bounds    arg
      :unmatched (:unmatched (last matches))}))
 
+(defn map-values-match [m key-matches val-matches param more]
+  (println  "key matches " key-matches)
+  (println  "val matches " val-matches)
+  (let [arg-count-test (list '= (list 'count param) (count m))
+        locals (dissoc (zipmap (mapcat :locals val-matches) (map :bounds key-matches)) '_ nil)
+
+        locals (if (empty? locals) nil [locals])
+        _ (println "Locals is " locals)
+        map-mexprs (list 'and (list 'instance? ILookup param)
+                         arg-count-test)
+        map-mexprs (concat map-mexprs
+                     (map (fn [k v]
+                            (if (= ::symbol (:bounds v))
+                              (list '.valAt (with-meta param {:tag 'clojure.lang.ILookup}) (:bounds k))
+                              (list '= (list '.valAt (with-meta param {:tag 'clojure.lang.ILookup}) (:bounds k)) (:bounds v))))
+                          key-matches val-matches))]
+    {:mexpr     map-mexprs
+     :locals    locals
+     :bounds    m
+     :unmatched more}))
+
 (declare type-match)
 
 (defn next-match [args next-param nested]
-  (prn "nm : " args next-param)
   (let [[arg & more] args
+        sub-matches (fn [arg param]
+                      (loop [ms []
+                             arg arg
+                             idx 0]
+                        (prn "ARG HERE " arg)
+                        (let [m (next-match arg `(nth ~param ~idx) true)
+                              um (:unmatched m)]
+                          (if (empty? um)
+                            (conj ms m)
+                            (recur (conj ms m) um (inc idx))))))
         name (if (and (symbol? arg) (not (type? arg))) arg nil)
         match (or
                 (cond
                   (= '_ arg) {:mexpr true :bounds ::symbol :unmatched more}
-                  (= '& arg) (if (second more) :error {:locals (if nested ['& (first more)] [(first more)]) :mexpr true :bounds ::rest-param :unmatched nil})
+                  (= '& arg) (if (second more)
+                               :error
+                               {:locals (if nested ['& (first more)] [(first more)]) :mexpr true :bounds ::rest-param :unmatched nil})
                   (= arg :else) {:mexpr :else :bounds ::symbol :unmatched more}
                   (= (first more) :-) {:locals [arg] :mexpr (list 'instance? (second more) next-param) :bounds (second more) :unmatched (drop 2 more)}
+                  (= (first more) :as) (assoc (next-match [arg] next-param false) :locals [(second more)] :bounds (second more) :unmatched (drop 2 more))
                   (some? name) {:locals [arg] :mexpr true :bounds ::symbol :unmatched more}
                   (type? arg) {:locals ['_] :mexpr (list 'instance? arg next-param) :bounds arg :unmatched more}
                   (pattern? arg) {:locals ['_] :mexpr (list 're-matches arg next-param) :bounds arg :unmatched more}
                   (sequential? arg) (if (type? (first arg))
                                       (if (second arg)
                                         (throw (IllegalArgumentException. "Illegal form"))
-                                        (seq-type-match arg next-param [{:mexpr `(type-check (first ~arg) ~next-param) :bounds arg :unmatched more}]))
-                                      (seq-match arg next-param
-                                                 (loop [ms []
-                                                        arg arg
-                                                        idx 0]
-                                                   (let [m (next-match arg `(nth ~next-param ~idx) true)
-                                                         _ (println "M " m)
-                                                         um (:unmatched m)]
-                                                     (if (empty? um)
-                                                       (conj ms m)
-                                                       (recur (conj ms m) um (inc idx)))))))
+                                        (seq-types-match arg next-param more))
+                                      (seq-values-match (sub-matches arg next-param) arg next-param))
                   (map-like? arg) (if (every? type? (first (seq arg)))
                                     {:mexpr
                                      `(and (list instance? ILookup ~next-param)
                                            (type-check (first (keys ~arg)) (keys ~next-param))
                                            (type-check (first (vals ~arg)) (vals ~next-param))) :bounds arg :unmatched more}
-                                    {:locals ['_] :mexpr (list 'instance? ILookup next-param) :bounds (mask arg symbol? ::symbol) :unmatched more})
-                  (= :seq arg) {:locals ['_] :mexpr (list 'not (list 'instance? Sequential next-param)) :bounds ::seq :unmatched more}
+                                    (map-values-match arg (sub-matches (keys arg) next-param) (sub-matches (vals arg) next-param) next-param more))
+                  (= :seq arg) {:locals ['_] :mexpr (list 'instance? Sequential next-param) :bounds ::seq :unmatched more}
                   :else {:locals ['_] :mexpr (list '= next-param arg) :bounds arg :unmatched more}))]
     (if (nil? match) {:locals ['_] :mexpr (list '= next-param arg) :bounds arg} match)))
 
@@ -226,7 +237,7 @@
                               (recur (:unmatched m) (conj ms m) (inc a)))))
         _ (println "matcher mtaches Is " matches)
         locals (vec (remove nil? (mapcat :locals matches)))
-        _ (println "Local s Is " locals)
+        _ (println "Locals in Is " locals)
         bounds (map :bounds matches)
         rest-param (true? (some #(= (:bounds %) ::rest-param) matches))]
     {:arity arity :matches matches :bounds bounds :params params :locals locals :exprs exprs :rest-param rest-param}))

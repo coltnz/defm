@@ -1,11 +1,24 @@
 (ns defm.core-test
   (:import (java.io File)
            (java.net URL)
-           [clojure.lang ArityException Compiler$CompilerException Keyword])
+           [clojure.lang Keyword])
   (:require [clojure.test :refer :all]
             [defm.core :refer :all]))
 
 (set! *warn-on-reflection* true)
+
+(deftest test-exprs
+  (testing "Dispatch on value"
+    (defm exprs
+          "Exprs."
+          ([:a] "a")
+          ([:b] "b")
+          ([:c] "c")
+          ([_] (str _1)))
+    (is (= "a" (exprs :a)))
+    (is (= "b" (exprs :b)))
+    (is (= "c" (exprs :c)))
+    (is (= "other" (exprs "other")))))
 
 (deftest test-fn
   (testing "Normal function."
@@ -17,18 +30,28 @@
     (is (= 9 (square 3)))
     (is (thrown? IllegalArgumentException (square 3 4)))))
 
-(deftest test-exprs
-  (testing "Dispatch on expr value"
-    (defm exprs
-          "Exprs."
-          ([:a] "a")
-          ([:b] "b")
-          ([:c] "c")
-          ([_] (str _1)))
-    (is (= "a" (exprs :a)))
-    (is (= "b" (exprs :b)))
-    (is (= "c" (exprs :c)))
-    (is (= "other" (exprs "other")))))
+(deftest test-bindings
+  (testing "symbols are bound to params"
+    (defm symbol-fn
+          (["f"] "F")
+          (["f" s] (str "f" s))
+          ([s "f"] (str s "f"))
+          ([s1 "f" s2] (str s1 "f" s2))
+          ([s] s))
+    (is (= "F" (symbol-fn "f")))
+    (is (= "fS" (symbol-fn "f" "S")))
+    (is (= "Sf" (symbol-fn "S" "f")))
+    (is (= "thisiss" (symbol-fn "thisiss")))))
+
+(deftest test-types
+  (testing "symbols can be bound to types to restrict args"
+    (defm binds-fn
+          ([String] _1)
+          ([s :- String "S"] (str s "S"))
+          ([d1 :- Double Double] (str d1 _2)))
+    (is (= "F" (binds-fn "F")))
+    (is (= "fS" (binds-fn "f" "S")))
+    (is (= "thisiss" (binds-fn "thisiss")))))
 
 (deftest test-nil
   (testing "Match on nil"
@@ -58,36 +81,12 @@
 
 ;(is (thrown? RuntimeException (eval '(defm un1 (["C" :a] 1) ([:b] 2) (["C" :a] 2)))))))
 
-
 (deftest test-patterns
   (testing "Patterns work as a match and error if not str expr"
     (defm patmatch
           [#"x"] :x))
   (is (= :x (patmatch "x")))
   (is (thrown? ClassCastException (patmatch 4))))
-
-(deftest test-symbols
-  (testing "symbols are bound to params"
-    (defm symbol-fn
-          (["f"] "F")
-          (["f" s] (str "f" s))
-          ([s "f"] (str s "f"))
-          ([s1 "f" s2] (str s1 "f" s2))
-          ([s] s))
-    (is (= "F" (symbol-fn "f")))
-    (is (= "fS" (symbol-fn "f" "S")))
-    (is (= "Sf" (symbol-fn "S" "f")))
-    (is (= "thisiss" (symbol-fn "thisiss")))))
-
-(deftest test-types
-  (testing "symbols can be restrict params to types"
-    (defm binds-fn
-          ([String] _1)
-          ([s :- String "S"] (str s "S"))
-          ([d1 :- Double Double] (str d1 _2)))
-    (is (= "F" (binds-fn "F")))
-    (is (= "fS" (binds-fn "f" "S")))
-    (is (= "thisiss" (binds-fn "thisiss")))))
 
 (deftest test-default-else
   (testing "If no default clause we'll add one"
@@ -105,7 +104,6 @@
     (is (= "String aString" (mixed-fn "aString")))
     (is (= "File aFile" (mixed-fn (File. "aFile"))))
     (is (= "java.net.URL" (mixed-fn (URL. "http://url"))))))
-
 
 (deftest test-match-literals
   (testing "test 1iterals"
@@ -152,29 +150,16 @@
     (is (= 3 (mw 1 2 3)))
     (is (= 1 (mw 4)))))
 
-(deftest test-wildcards
-  (testing "multi-wildcards"
-    (defm mw
-          ([_ _] 2)
-          ([a _ b] 3)
-          ([_] 1))
-    (is (= 2 (mw 1 2)))
-    (is (= 3 (mw 1 2 3)))
-    (is (= 1 (mw 4)))))
+(deftest test-:seq
+  (testing ":seq tests"
+    (defm mseq
+          ([:seq] "s")
+          ([h :seq] [[h] _2])
+          ([:seq t] [[_1] t]))
+    (is (= "s" (mseq [:a])))
+    (is (= [[:a] [:b :c]] (mseq :a [:b :c])))
+    (is (= [[:d :e] :f] (mseq [:d :e] :f)))))
 
-
-
-;(deftest test-:seq
-;  (testing ":seq tests"
-;    (defm mseq
-;          ;([h :seq] (str h _2))
-;          ;([:seq] "s")
-;          ([:seq t] (str "s:" _1 " t:" t)))
-;          ;([:seq :seq] "surplus :seq"))
-;    (is (= "s" (mseq [:a])))
-;    (is (= "a [:b :c]" (mseq :a [:b :c])))
-;    (is (= ":a s" (mseq [:a] :b)))))
-;
 (deftest test-recursive
   (testing "count down"
     (defm count-down
@@ -205,8 +190,7 @@
           ([[String]] {:strings (walk-types _1)})
           ([[Number]] {:numbers (walk-types _1)})
           ([[Long] [Number]] {:numberss (map walk-types [_1 _2])})
-          ([[Long] [Number] [[[Double]]]] {:numberssss (map walk-types [_1 _2 _3])})
-          )
+          ([[Long] [Number] [[[Double]]]] {:numberssss (map walk-types [_1 _2 _3])}))
     (is (= {:strings [String String]} (typed-vecs ["a" "b"])))
     (is (= {:numbers [Long Long Long Long]} (typed-vecs [4 3 2 1])))
     (is (= {:numberss [[Long Long] [Long Long]]} (typed-vecs [1 2] [3 4])))
@@ -217,8 +201,7 @@
     (defm val-vecs
           ([[a]] a)
           ([[a b]] [a b])
-          ([[a b & c]] [a b c])
-          )
+          ([[a b & c]] [a b c]))
     (is (= 1 (val-vecs [1])))
     (is (= [:a :b] (val-vecs [:a :b])))
     (is (= [1 2 [3 4 5 6]] (val-vecs [1 2 3 4 5 6])))))
@@ -259,15 +242,33 @@
 (deftest test-map-values
   (testing "map values"
     (defm mapvalues
-          ([{:a 1 "X" "y"}] 1)
-          ([{:a 1}] 2))
-    (is (= 2 (mapvalues {:a 1})))))
-;(deftest test-vector-dest
-;  (testing "test3"
-;    (defm test3
-;          ([[_ _ 2]] :a0)
-;          ([[1 1 3]] :a1)
-;          ([[1 2 3]] :a2))
-;    (is (= :a2 (test3 [1 2 3])))
-;    (is (= :a0 (test3 [3 3 2])))
-;    (is (= :a1 (test3 [1 1 3])))))
+          ([{:a 1}] "a1")
+          ([{:b b}] (str "b" b))
+          ([{Integer String}] (str "x")))
+    (is (= "a1" (mapvalues {:a 1})))
+    (is (= "b2" (mapvalues {:b 2})))))
+
+(deftest test-vector-dest
+  (testing "test3"
+    (defm test3
+          ([[_ _ 2]] :a0)
+          ([[1 1 3]] :a1)
+          ([[1 2 3]] :a2))
+    (is (= :a2 (test3 [1 2 3])))
+    (is (= :a0 (test3 [3 3 2])))
+    (is (= :a1 (test3 [1 1 3])))))
+
+(deftest test-as-dest                                             ;not supporting nested as for now
+  (testing "as"
+    (defm astest
+          ([Long :as l] (str "l is " l))
+          ([[4 5 6] :as nums] (str "nums is " nums))
+          ([[Long] :as ls] (str "ls is " ls))
+          ([{String String} :as m] (str "m is " m))
+          ([{:c :d} :as m2] (str "m2 is " m2))
+          )
+    (is (= "l is 1" (astest 1)))
+    (is (= "nums is [4 5 6]" (astest [4 5 6])))
+    (is (= "ls is [7 8]" (astest [7 8])))
+    (is (= "m is {\"a\" \"b\"}" (astest {"a" "b"})))
+    (is (= "m2 is {:c :d}" (astest {:c :d})))))
