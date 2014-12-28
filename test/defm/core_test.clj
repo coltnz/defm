@@ -126,7 +126,7 @@
     (defm test-se
           ([1] 1)
           ([x] (println "squaring")
-           (* 2 x)))
+            (* 2 x)))
     (with-out-str
       (is (= 4 (test-se 2))))
     (is (= "squaring") (with-out-str (test-se 2)))))
@@ -149,23 +149,23 @@
     (is (= 2 (mw 1 2)))
     (is (= 3 (mw 1 2 3)))
     (is (= 1 (mw 4)))))
-
-(deftest test-:seq
-  (testing ":seq tests"
-    (defm mseq
-          ([:seq] "s")
-          ([h :seq] [[h] _2])
-          ([:seq t] [[_1] t]))
-    (is (= "s" (mseq [:a])))
-    (is (= [[:a] [:b :c]] (mseq :a [:b :c])))
-    (is (= [[:d :e] :f] (mseq [:d :e] :f)))))
+;
+;(deftest test-:seq
+;  (testing ":seq tests"
+;    (defm mseq
+;          ([:seq] "s")
+;          ([h :seq] [[h] _2])
+;          ([:seq t] [[_1] t]))
+;    (is (= "s" (mseq [:a])))
+;    (is (= [[:a] [:b :c]] (mseq :a [:b :c])))
+;    (is (= [[:d :e] :f] (mseq [:d :e] :f)))))
 
 (deftest test-recursive
   (testing "count down"
     (defm count-down
           ([0] "zero!")
           ([n] (println n)
-           (recur (dec n))))
+            (recur (dec n))))
     (is (= (count-down 0) "zero!"))
     (with-out-str (is (= (count-down 6) "zero!"))))
   (testing "fib"
@@ -258,17 +258,59 @@
     (is (= :a0 (test3 [3 3 2])))
     (is (= :a1 (test3 [1 1 3])))))
 
-(deftest test-as-dest                                             ;not supporting nested as for now
+(deftest test-as-dest
+  ;todo not supported nested :as
   (testing "as"
     (defm astest
           ([Long :as l] (str "l is " l))
           ([[4 5 6] :as nums] (str "nums is " nums))
           ([[Long] :as ls] (str "ls is " ls))
           ([{String String} :as m] (str "m is " m))
-          ([{:c :d} :as m2] (str "m2 is " m2))
-          )
+          ([{:c :d} :as m2] (str "m2 is " m2)))
     (is (= "l is 1" (astest 1)))
     (is (= "nums is [4 5 6]" (astest [4 5 6])))
     (is (= "ls is [7 8]" (astest [7 8])))
     (is (= "m is {\"a\" \"b\"}" (astest {"a" "b"})))
     (is (= "m2 is {:c :d}" (astest {:c :d})))))
+
+(deftest test-fm
+  (testing "simple fm 1 binding"
+    (let [afm (fm ([:a b c] 1))]
+      (is (= 1 (afm :a 'b 'c))))))
+
+(deftest test-fm2
+  (testing "simple fm dual")
+  (let [afm (fm [:a b c] [:b c b]
+                   [_ _ _] _3)]
+    (is (= [:b "C" "B"] (afm :a "B" "C")))
+    (is (= 6 (afm 4 5 6)))))
+
+(deftest test-match
+  (testing "simple match"
+    (let [blah :a]
+      (is (= 1 (match blah
+                      [:a] 1))))))
+
+(deftest test-fm2
+  (testing "simple fm dual")
+  (let [afm (fm [:a b c] [:b c b]
+                   [_ _ _] _3)]
+    (is (= [:b "C" "B"] (afm :a "B" "C")))
+    (is (= 6 (afm 4 5 6)))))
+
+;(deftest test-fm-else
+;  (testing "simple fm dual")
+;  (let [afm (fm [:a] 1
+;                   [:b :c] 2
+;                   :else _1)]
+;    (is (= 1 (afm :a)))
+;    (is (= 2 (afm :b :c)))))
+
+;
+;(deftest test-fm2
+;  (testing "simple fm")
+;  (is (= [:b "B" "C"] (match [:a "B" "C"]
+;                             [:a b c] [:b b c])))
+;  (is (= 6 (match 4
+;                  4 6))))
+

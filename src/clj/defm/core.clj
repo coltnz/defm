@@ -1,8 +1,8 @@
 (ns defm.core
   (:require [clojure.walk :as walk]
-            [clojure.pprint :as ppint])
+            [clojure.pprint :as pprint])
   (:import [java.util.regex Pattern]
-           [clojure.lang Symbol ILookup Sequential]))
+           [clojure.lang Symbol ILookup ISeq]))
 
 ;; # Motivations
 ;;
@@ -10,14 +10,9 @@
 ;; Safe by default
 ;;  - reject if unreachable arg pattern discovered
 ;;  - if no default :else pattern provided one is generated to throw IllegalArgumentExcepton
-;;  - if pattern used on items of large seq, stop checking after *max-same-matches* to prevent head holding
 
 ;; # Implementation
 ;;
-;; * x and y are called _occurrences_
-;; * 1, 2, 3 and 4 are _arg patterns_
-;; * [1 2] and [3 4] are _pattern rows_
-;; * :a0 and :a1 are _actions_
 ;; * _1 _2 _3 .. _n are the implicit parameters for an n-arg match
 
 
@@ -108,13 +103,12 @@
         params (if rest-params rest-params params-vec)
         cond-clauses (mapcat
                        (fn [matcher]
-                         (flush)
                          (let [matches (:matches matcher)
                                exprs (:exprs matcher)
                                test (->test (map :mexpr matches))
                                locals (:locals matcher)]
                            (if (seq locals)
-                           ;if one local we can shed a vec
+                             ;if one local we can shed a vec
                              (if (second locals)
                                (concat (list test (concat (list 'let (vector locals params-vec)) exprs)))
                                (concat (list test (concat (list 'let (vector (first locals) (first params-vec))) exprs))))
@@ -165,11 +159,11 @@
         map-mexprs (list 'and (list 'instance? ILookup param)
                          arg-count-test)
         map-mexprs (concat map-mexprs
-                     (map (fn [k v]
-                            (if (= ::symbol (:bounds v))
-                              (list '.valAt (with-meta param {:tag 'clojure.lang.ILookup}) (:bounds k))
-                              (list '= (list '.valAt (with-meta param {:tag 'clojure.lang.ILookup}) (:bounds k)) (:bounds v))))
-                          key-matches val-matches))]
+                           (map (fn [k v]
+                                  (if (= ::symbol (:bounds v))
+                                    (list '.valAt (with-meta param {:tag 'clojure.lang.ILookup}) (:bounds k))
+                                    (list '= (list '.valAt (with-meta param {:tag 'clojure.lang.ILookup}) (:bounds k)) (:bounds v))))
+                                key-matches val-matches))]
     {:mexpr     map-mexprs
      :locals    locals
      :bounds    m
@@ -212,25 +206,25 @@
                                            (type-check (first (keys ~arg)) (keys ~next-param))
                                            (type-check (first (vals ~arg)) (vals ~next-param))) :bounds arg :unmatched more}
                                     (map-values-match arg (sub-matches (keys arg) next-param) (sub-matches (vals arg) next-param) next-param more))
-                  (= :seq arg) {:locals ['_] :mexpr (list 'instance? Sequential next-param) :bounds ::seq :unmatched more}
+                  (= :seq arg) {:locals ['_] :mexpr (list 'instance? ISeq next-param) :bounds ::seq :unmatched more}
                   :else {:locals ['_] :mexpr (list '= next-param arg) :bounds arg :unmatched more}))]
     (if (nil? match) {:locals ['_] :mexpr (list '= next-param arg) :bounds arg} match)))
 
 (defn ->matcher
-  "For a match extract the type hints and annotations, and names if supplied."
-  [params exprs]
-  (let [[arity matches] (loop [ps params
+  "For a match extract the type hints, annotations, and names if supplied."
+  [match-args exprs]
+  (let [[arity matches] (loop [ma match-args
                                ms []
                                a 0]
-                          (if (empty? ps)
+                          (if (empty? ma)
                             [a ms]
-                            (let [m (next-match ps (to-param (inc a)) false)]
+                            (let [m (next-match ma (to-param (inc a)) false)]
                               (assert some? (:unmatched m))
                               (recur (:unmatched m) (conj ms m) (inc a)))))
         locals (vec (remove nil? (mapcat :locals matches)))
         bounds (map :bounds matches)
         rest-param (true? (some #(= (:bounds %) ::rest-param) matches))]
-    {:arity arity :matches matches :bounds bounds :params params :locals locals :exprs exprs :rest-param rest-param}))
+    {:arity arity :matches matches :bounds bounds :params match-args :locals locals :exprs exprs :rest-param rest-param}))
 
 
 
@@ -246,12 +240,13 @@
 (defmacro fm
   [& body]
   (let [
-        ;_ (map #(if (next body)
-        ;         (second body)
-        ;         (throw (IllegalArgumentException. "defm requires an even number of forms"))))
+        _ (map #(if (next body)
+                 (second body)
+                 (throw (IllegalArgumentException. "fm requires an even number of forms"))) body)
+        body (if (vector? (first body)) (map list* (partition 2 body)) body)
         matchers (reduce (fn [matchers match-clause]
-                           (let [[match-params & exprs] match-clause]
-                             (conj matchers (->matcher match-params exprs))))
+                           (let [[march-args & exprs] match-clause]
+                             (conj matchers (->matcher march-args exprs))))
                          [] body)
         arity->matchers (group-by #(:arity %) matchers)
         conds (for [a (sort (keys arity->matchers))
@@ -281,7 +276,12 @@
   [name & decls]
   (list* `defm (vary-meta name assoc :private true) decls))
 
-(defn expand [a-defm]
-  (clojure.pprint/pprint (macroexpand-1 a-defm)))
+(defmacro match
+  "Matches `expr` against "
+  [expr & body]
+  (list `(fm ~@body) expr))
+
+(defn expand [a-fm]
+  (pprint/pprint (macroexpand-1 a-fm)))
 
 
