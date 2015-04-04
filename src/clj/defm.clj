@@ -1,20 +1,7 @@
-(ns defm.core
-  (:require [clojure.walk :as walk]
-            [clojure.pprint :as pprint])
+(ns defm
+  (:require [clojure.pprint :as pprint])
   (:import [java.util.regex Pattern]
            [clojure.lang Symbol ILookup ISeq]))
-
-;; # Motivations
-;;
-;; Fast, 'light' pattern dispatching for fns
-;; Safe by default
-;;  - reject if unreachable arg pattern discovered
-;;  - if no default :else pattern provided one is generated to throw IllegalArgumentExcepton
-
-;; # Implementation
-;;
-;; * _1 _2 _3 .. _n are the implicit parameters for an n-arg match
-
 
 ;inlined from tools.macro
 (defn name-with-attributes
@@ -67,10 +54,11 @@
   (throw (RuntimeException. (str "Unreachable match " match))))
 
 (defn subsumes [prior bounds]
+  ;(println "pb " prior bounds)
+  (flush)
   (every? true?
           (map
             (fn [p b]
-              (flush)
               (cond
                 (and (class? b) (class? p) (.isAssignableFrom b p)) true
                 (= b p) true
@@ -80,6 +68,8 @@
             bounds)))
 
 (defn process-bounds [bounded bounds matcher]
+  ;(println "bounded" bounded)
+  ;(println "bounds" bounds)
   (doseq [prior bounded]
     (if (subsumes prior bounds)
       (bounds-err-> (:params matcher))))
@@ -88,7 +78,7 @@
 (defn check-bounds [matchers]
   (reduce #(process-bounds %1 (:bounds %2) %2) [] matchers))
 
-;; To make a valid test from mexprs we merely need to `and` if plural and add :else if no default clause.
+;; To make a valid test from mexpr s we merely need to `and` if plural and add :else if no default clause.
 ;; Additionally we remove redundant `true` matches.
 (defn ->test [mexprs]
   (let [mexprs (if (second mexprs) (remove #(true? %) mexprs) mexprs)]
@@ -104,26 +94,22 @@
         cond-clauses (mapcat
                        (fn [matcher]
                          (let [matches (:matches matcher)
-                               exprs (:exprs matcher)
+                               expr (:expr matcher)
                                test (->test (map :mexpr matches))
                                locals (:locals matcher)]
                            (if (seq locals)
                              ;if one local we can shed a vec
                              (if (second locals)
-                               (concat (list test (concat (list 'let (vector locals params-vec)) exprs)))
-                               (concat (list test (concat (list 'let (vector (first locals) (first params-vec))) exprs))))
-                             (concat (list test) exprs))))
+                               (concat (list test (concat (list 'let (vector locals params-vec)) expr)))
+                               (concat (list test (concat (list 'let (vector (first locals) (first params-vec))) expr))))
+                             (concat (list test) expr))))
                        matchers)]
     (let [last-test (first (butlast cond-clauses))]
-      (if (or (= last-test [:else]) (= last-test true))
+      (if (or (= last-test :else) (= last-test true))
         (list params (conj cond-clauses 'cond))
         (list params (conj (concat cond-clauses
                                    [:else `(throw (IllegalArgumentException.
                                                     (str "No match for " ~params)))]) 'cond))))))
-
-(defn mask [what when? with]
-  (walk/postwalk #(if (when? %) with %) what))
-
 
 (defn type-check [type coll] (every? true? (map #(instance? type %) coll)))
 (defn types-check [types coll] '(and (= (count types) (count coll)) (every? true? (map #(instance? %1 %2) types coll))))
@@ -212,7 +198,7 @@
 
 (defn ->matcher
   "For a match extract the type hints, annotations, and names if supplied."
-  [match-args exprs]
+  [match-args expr]
   (let [[arity matches] (loop [ma match-args
                                ms []
                                a 0]
@@ -224,7 +210,8 @@
         locals (vec (remove nil? (mapcat :locals matches)))
         bounds (map :bounds matches)
         rest-param (true? (some #(= (:bounds %) ::rest-param) matches))]
-    {:arity arity :matches matches :bounds bounds :params match-args :locals locals :exprs exprs :rest-param rest-param}))
+    {:arity  arity :matches matches :bounds bounds :match-args match-args
+     :locals locals :expr expr :rest-param rest-param}))
 
 
 
@@ -236,7 +223,6 @@
   (fn [next-arg next-param more]
     [next-arg next-param more]))
 
-
 (defmacro fm
   [& body]
   (let [
@@ -244,13 +230,24 @@
                  (second body)
                  (throw (IllegalArgumentException. "fm requires an even number of forms"))) body)
         body (if (vector? (first body)) (map list* (partition 2 body)) body)
+        [else? else-expr] [(= (first (last body)) :else) (last body)]
+        body (if else? (butlast (rest body)) body)
         matchers (reduce (fn [matchers match-clause]
-                           (let [[march-args & exprs] match-clause]
-                             (conj matchers (->matcher march-args exprs))))
+                           (let [[match-args & expr] match-clause]
+                             (if (= match-args :else)
+                               (throw (IllegalArgumentException. ":else can only be last match")))
+                             (conj matchers (->matcher match-args expr))))
                          [] body)
         arity->matchers (group-by #(:arity %) matchers)
+        _ (clojure.pprint/pprint arity->matchers)
         conds (for [a (sort (keys arity->matchers))
-                    :let [matchers (arity->matchers a)]]
+                    :let [matchers (if else?
+                                     (conj (arity->matchers a)
+                                           {:match-args :else
+                                            :expr else-expr
+                                            :matches [(next-match [:else] (to-param a) false)]
+                                            :bounds [::symbol]})
+                                     (arity->matchers a))]]
                 (->cond a matchers))]
     `(fn ~@conds)))
 
@@ -264,15 +261,14 @@
 
 (defmacro defm
   [name & fdecl]
+  "Same as defm, yielding non-public def"
+
   (let [[name body] (name-with-attributes name fdecl)
-        body (if (vector? (first body))
-               (list body)
-               body)
         name (vary-meta name assoc :argslist (list 'quote (@#'clojure.core/sigs body)))]
     `(def ~name (fm ~@body))))
 
 (defmacro defm-
-  "same as defm, yielding non-public def"
+  "Same as defm, yielding non-public def"
   [name & decls]
   (list* `defm (vary-meta name assoc :private true) decls))
 
@@ -281,7 +277,8 @@
   [expr & body]
   (list `(fm ~@body) expr))
 
-(defn expand [a-fm]
+(defn debug [a-fm]
+  "Pretty prints macroexpansion of `a-fm`"
   (pprint/pprint (macroexpand-1 a-fm)))
 
 

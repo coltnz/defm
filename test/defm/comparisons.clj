@@ -1,6 +1,6 @@
 (ns defm.comparisons
   (:require
-    [defm.core :refer :all]
+    [defm.defm :refer :all]
     [schema.core :as s]
     [defun :refer :all]
     [clojure.core.match :as m]))
